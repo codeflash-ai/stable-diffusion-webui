@@ -36,7 +36,7 @@ def embedding_to_b64(data):
 
 def embedding_from_b64(data):
     d = base64.b64decode(data)
-    return json.loads(d, cls=EmbeddingDecoder)
+    return json.loads(d.decode('utf-8'), cls=EmbeddingDecoder)
 
 
 def lcg(m=2**32, a=1664525, c=1013904223, seed=0):
