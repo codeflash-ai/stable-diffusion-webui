@@ -72,6 +72,25 @@ def get_learned_conditioning_prompt_schedules(prompts, base_steps, hires_steps=N
         flt_offset = 1.0
         steps = hires_steps
 
+    if not hasattr(get_learned_conditioning_prompt_schedules, "_parser"):
+        grammar = r"""
+            start: (plain | scheduled | alternate | "(" start ")" )*
+            scheduled : "[" start ":" start ":" NUMBER "]"
+                      | "[" start ":" start ":" NUMBER "." NUMBER "]"
+                      | "[" start ":" start ":" NUMBER "]"
+                      | "[" start ":" NUMBER "]"
+                      | "[" start ":" NUMBER "." NUMBER "]"
+            alternate : "[" [start ("|" start)*] "]"
+            plain: /[^\[\]()]+/
+
+            NUMBER: /[0-9]+/
+            %import common.WS
+            %ignore WS
+        """
+        get_learned_conditioning_prompt_schedules._parser = lark.Lark(grammar, parser="lalr", maybe_placeholders=False)
+
+    schedule_parser = get_learned_conditioning_prompt_schedules._parser
+
     def collect_steps(steps, tree):
         res = [steps]
 
@@ -177,8 +196,8 @@ def get_learned_conditioning(model, prompts: SdConditioning | list[str], steps, 
     prompt_schedules = get_learned_conditioning_prompt_schedules(prompts, steps, hires_steps, use_old_scheduling)
     cache = {}
 
-    for prompt, prompt_schedule in zip(prompts, prompt_schedules):
-
+    # Avoid repetitive lookup by using prompt_schedules in index order
+    for idx, (prompt, prompt_schedule) in enumerate(zip(prompts, prompt_schedules)):
         cached = cache.get(prompt, None)
         if cached is not None:
             res.append(cached)
@@ -187,14 +206,16 @@ def get_learned_conditioning(model, prompts: SdConditioning | list[str], steps, 
         texts = SdConditioning([x[1] for x in prompt_schedule], copy_from=prompts)
         conds = model.get_learned_conditioning(texts)
 
+        # Preallocate list
         cond_schedule = []
+        append = cond_schedule.append
         for i, (end_at_step, _) in enumerate(prompt_schedule):
             if isinstance(conds, dict):
+                # Dict comprehension is most efficient for dict slicing
                 cond = {k: v[i] for k, v in conds.items()}
             else:
                 cond = conds[i]
-
-            cond_schedule.append(ScheduledPromptConditioning(end_at_step, cond))
+            append(ScheduledPromptConditioning(end_at_step, cond))
 
         cache[prompt] = cond_schedule
         res.append(cond_schedule)
