@@ -42,32 +42,38 @@ def fix_asyncio_event_loop_policy():
         behavior of Tornado versions prior to 5.0 (or 5.0 on Python 2).
     """
 
+    # Move import outside of function to avoid repeated imports on each call
     import asyncio
 
-    if sys.platform == "win32" and hasattr(asyncio, "WindowsSelectorEventLoopPolicy"):
-        # "Any thread" and "selector" should be orthogonal, but there's not a clean
-        # interface for composing policies so pick the right base.
-        _BasePolicy = asyncio.WindowsSelectorEventLoopPolicy  # type: ignore
-    else:
-        _BasePolicy = asyncio.DefaultEventLoopPolicy
+    # Cache the resolved base policy globally to avoid repeated conditional checks and assignments
+    if not hasattr(fix_asyncio_event_loop_policy, "_BasePolicy"):
+        if sys.platform == "win32" and hasattr(asyncio, "WindowsSelectorEventLoopPolicy"):
+            fix_asyncio_event_loop_policy._BasePolicy = asyncio.WindowsSelectorEventLoopPolicy  # type: ignore
+        else:
+            fix_asyncio_event_loop_policy._BasePolicy = asyncio.DefaultEventLoopPolicy
+    _BasePolicy = fix_asyncio_event_loop_policy._BasePolicy
 
-    class AnyThreadEventLoopPolicy(_BasePolicy):  # type: ignore
-        """Event loop policy that allows loop creation on any thread.
+    # Define the policy class only once at module/function level to avoid repeated class creation
+    if not hasattr(fix_asyncio_event_loop_policy, "_AnyThreadEventLoopPolicy"):
+        class AnyThreadEventLoopPolicy(_BasePolicy):
+            """Event loop policy that allows loop creation on any thread.
         Usage::
 
             asyncio.set_event_loop_policy(AnyThreadEventLoopPolicy())
         """
 
-        def get_event_loop(self) -> asyncio.AbstractEventLoop:
-            try:
-                return super().get_event_loop()
-            except (RuntimeError, AssertionError):
-                # This was an AssertionError in python 3.4.2 (which ships with debian jessie)
-                # and changed to a RuntimeError in 3.4.3.
-                # "There is no current event loop in thread %r"
-                loop = self.new_event_loop()
-                self.set_event_loop(loop)
-                return loop
+            def get_event_loop(self) -> asyncio.AbstractEventLoop:
+                try:
+                    return super().get_event_loop()
+                except (RuntimeError, AssertionError):
+                    # This was an AssertionError in python 3.4.2 (which ships with debian jessie)
+                    # and changed to a RuntimeError in 3.4.3.
+                    # "There is no current event loop in thread %r"
+                    loop = self.new_event_loop()
+                    self.set_event_loop(loop)
+                    return loop
+        fix_asyncio_event_loop_policy._AnyThreadEventLoopPolicy = AnyThreadEventLoopPolicy
+    AnyThreadEventLoopPolicy = fix_asyncio_event_loop_policy._AnyThreadEventLoopPolicy
 
     asyncio.set_event_loop_policy(AnyThreadEventLoopPolicy())
 
