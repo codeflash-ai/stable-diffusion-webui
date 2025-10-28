@@ -8,15 +8,16 @@ import tqdm
 
 from modules.paths import data_path, script_path
 
-cache_filename = os.environ.get('SD_WEBUI_CACHE_FILE', os.path.join(data_path, "cache.json"))
-cache_dir = os.environ.get('SD_WEBUI_CACHE_DIR', os.path.join(data_path, "cache"))
+cache_filename = os.environ.get(
+    "SD_WEBUI_CACHE_FILE", os.path.join(data_path, "cache.json")
+)
+cache_dir = os.environ.get("SD_WEBUI_CACHE_DIR", os.path.join(data_path, "cache"))
 caches = {}
 cache_lock = threading.Lock()
 
 
 def dump_cache():
     """old function for dumping cache to disk; does nothing since diskcache."""
-
     pass
 
 
@@ -36,7 +37,9 @@ def convert_old_cached_data():
         return
     except Exception:
         os.replace(cache_filename, os.path.join(script_path, "tmp", "cache.json"))
-        print('[ERROR] issue occurred while trying to read cache.json; old cache has been moved to tmp/cache.json')
+        print(
+            "[ERROR] issue occurred while trying to read cache.json; old cache has been moved to tmp/cache.json"
+        )
         return
 
     total_count = sum(len(keyvalues) for keyvalues in data.values())
@@ -63,17 +66,27 @@ def cache(subsection):
     Returns:
         diskcache.Cache: The cache data for the specified subsection.
     """
-
     cache_obj = caches.get(subsection)
-    if not cache_obj:
-        with cache_lock:
-            if not os.path.exists(cache_dir) and os.path.isfile(cache_filename):
-                convert_old_cached_data()
+    if cache_obj is not None:
+        return cache_obj
 
-            cache_obj = caches.get(subsection)
-            if not cache_obj:
-                cache_obj = make_cache(subsection)
-                caches[subsection] = cache_obj
+    # Move os.path.exists and os.path.isfile up to avoid repeated expensive checks and double locking
+    with cache_lock:
+        # Check again in case another thread created the cache meanwhile
+        cache_obj = caches.get(subsection)
+        if cache_obj is not None:
+            return cache_obj
+
+        # Only do potentially expensive disk operations once per subsection missing
+        cache_dir_exists = os.path.exists(cache_dir)
+        cache_filename_is_file = os.path.isfile(cache_filename)
+        if not cache_dir_exists and cache_filename_is_file:
+            convert_old_cached_data()
+
+        cache_obj = caches.get(subsection)
+        if cache_obj is None:
+            cache_obj = make_cache(subsection)
+            caches[subsection] = cache_obj
 
     return cache_obj
 
@@ -100,24 +113,26 @@ def cached_data_for_file(subsection, title, filename, func):
     If the data generation fails, None is returned to indicate the failure. Otherwise, the generated
     or cached data is returned as a dictionary.
     """
-
     existing_cache = cache(subsection)
     ondisk_mtime = os.path.getmtime(filename)
-
     entry = existing_cache.get(title)
+
+    # Reduce number of key lookups and ensure fast mtime comparison
     if entry:
         cached_mtime = entry.get("mtime", 0)
+        # If cached mtime is not up-to-date, invalidate entry
         if ondisk_mtime > cached_mtime:
             entry = None
 
-    if not entry or 'value' not in entry:
+    # Only call func() when necessary
+    if not entry or "value" not in entry:
         value = func()
         if value is None:
             return None
 
-        entry = {'mtime': ondisk_mtime, 'value': value}
+        entry = {"mtime": ondisk_mtime, "value": value}
         existing_cache[title] = entry
 
         dump_cache()
 
-    return entry['value']
+    return entry["value"]
