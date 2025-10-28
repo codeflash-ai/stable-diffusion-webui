@@ -52,12 +52,18 @@ def philox4_32(counter, key, rounds=10):
     Returns:
         numpy.ndarray: A 4xN array of 32-bit integers containing the generated random numbers.
     """
+    # Precompute key increments as uint32 for faster in-place addition
+    k0_inc = np.uint32(philox_w[0])
+    k1_inc = np.uint32(philox_w[1])
 
+    # Use local variable for key for slightly faster indexing in the loop
+    k0, k1 = key[0], key[1]
     for _ in range(rounds - 1):
         philox4_round(counter, key)
-
-        key[0] = key[0] + philox_w[0]
-        key[1] = key[1] + philox_w[1]
+        # In-place addition avoids array creation
+        k0 += k0_inc
+        k1 += k1_inc
+        key[0], key[1] = k0, k1
 
     philox4_round(counter, key)
     return counter
@@ -90,11 +96,12 @@ class Generator:
 
         counter = np.zeros((4, n), dtype=np.uint32)
         counter[0] = self.offset
-        counter[2] = np.arange(n, dtype=np.uint32)  # up to 2^32 numbers can be generated - if you want more you'd need to spill into counter[3]
+        counter[2] = np.arange(
+            n, dtype=np.uint32
+        )  # up to 2^32 numbers can be generated - if you want more you'd need to spill into counter[3]
         self.offset += 1
 
-        key = np.empty(n, dtype=np.uint64)
-        key.fill(self.seed)
+        key = np.full(n, self.seed, dtype=np.uint64)
         key = uint32(key)
 
         g = philox4_32(counter, key)
