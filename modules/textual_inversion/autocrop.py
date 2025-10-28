@@ -277,11 +277,16 @@ def poi_average(pois, settings):
     x = 0.0
     y = 0.0
     for poi in pois:
-        weight += poi.weight
-        x += poi.x * poi.weight
-        y += poi.y * poi.weight
-    avg_x = round(weight and x / weight)
-    avg_y = round(weight and y / weight)
+        w = poi.weight
+        weight += w
+        x += poi.x * w
+        y += poi.y * w
+    if weight:
+        avg_x = round(x / weight)
+        avg_y = round(y / weight)
+    else:
+        avg_x = 0
+        avg_y = 0
 
     return PointOfInterest(avg_x, avg_y)
 
