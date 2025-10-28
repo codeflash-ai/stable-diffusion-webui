@@ -237,33 +237,51 @@ def image_entropy_points(im, settings):
     else:
         return []
 
-    e_max = 0
+    e_max = -1  # Avoids early ties on e=0, ensures detection of initial crop as best
+    crop_step = 4
+
+    # Pre-create one crop object and update its box at each iteration
     crop_current = [0, 0, settings.crop_width, settings.crop_height]
-    crop_best = crop_current
-    while crop_current[move_idx[1]] < move_max:
+    crop_best = None
+
+    # Cache needed box indices for speed
+    mi0, mi1 = move_idx[0], move_idx[1]
+    cwidth, cheight = settings.crop_width, settings.crop_height
+
+    # Precompute stop value to avoid over-cropping image
+    stop_val = move_max - (cwidth if mi0 == 2 else cheight)
+    # Ensure at least one crop is evaluated even if image < crop size; PIL handles out-of-bounds
+    while crop_current[mi1] <= stop_val:
         crop = im.crop(tuple(crop_current))
         e = image_entropy(crop)
 
-        if (e > e_max):
+        if e > e_max:
             e_max = e
-            crop_best = list(crop_current)
+            # Copy only when new crop is best
+            crop_best = tuple(crop_current)
 
-        crop_current[move_idx[0]] += 4
-        crop_current[move_idx[1]] += 4
+        crop_current[mi0] += crop_step
+        crop_current[mi1] += crop_step
 
-    x_mid = int(crop_best[0] + settings.crop_width / 2)
-    y_mid = int(crop_best[1] + settings.crop_height / 2)
+    # If no best found (which shouldn't happen), fall back to origin crop
+    if crop_best is None:
+        crop_best = (0, 0, cwidth, cheight)
+
+    x_mid = int(crop_best[0] + cwidth / 2)
+    y_mid = int(crop_best[1] + cheight / 2)
 
     return [PointOfInterest(x_mid, y_mid, size=25, weight=1.0)]
 
 
 def image_entropy(im):
-    # greyscale image entropy
-    # band = np.asarray(im.convert("L"))
-    band = np.asarray(im.convert("1"), dtype=np.uint8)
-    hist, _ = np.histogram(band, bins=range(0, 256))
-    hist = hist[hist > 0]
-    return -np.log2(hist / hist.sum()).sum()
+    # Greyscale image entropy using 8-bit grayscale for speed/memory
+    band = np.asarray(im.convert("L"), dtype=np.uint8)
+    hist = np.bincount(band.ravel(), minlength=256)
+    nonzero = hist > 0
+    hist_sum = hist.sum()
+    # Avoid temporary arrays, compute probabilities in-place
+    probs = hist[nonzero] / hist_sum
+    return -np.sum(np.log2(probs) * probs)
 
 
 def centroid(pois):
