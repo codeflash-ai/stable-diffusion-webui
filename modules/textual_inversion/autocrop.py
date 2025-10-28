@@ -14,99 +14,112 @@ RED = "#F00"
 def crop_image(im, settings):
     """ Intelligently crop an image to the subject matter """
 
-    scale_by = 1
-    if is_landscape(im.width, im.height):
-        scale_by = settings.crop_height / im.height
-    elif is_portrait(im.width, im.height):
-        scale_by = settings.crop_width / im.width
-    elif is_square(im.width, im.height):
-        if is_square(settings.crop_width, settings.crop_height):
-            scale_by = settings.crop_width / im.width
-        elif is_landscape(settings.crop_width, settings.crop_height):
-            scale_by = settings.crop_width / im.width
-        elif is_portrait(settings.crop_width, settings.crop_height):
-            scale_by = settings.crop_height / im.height
+    width, height = im.width, im.height
+    crop_width, crop_height = settings.crop_width, settings.crop_height
 
-    im = im.resize((int(im.width * scale_by), int(im.height * scale_by)))
-    im_debug = im.copy()
+    # Precompute conditions to avoid redundant function calls
+    is_land = width > height
+    is_port = height > width
+    is_squ = width == height
 
-    focus = focal_point(im_debug, settings)
+    scale_by = 1.0
+    if is_land:
+        scale_by = crop_height / height
+    elif is_port:
+        scale_by = crop_width / width
+    elif is_squ:
+        # Only check square/landscape/portrait for crop dimensions ONCE
+        crop_w, crop_h = crop_width, crop_height
+        if crop_w == crop_h:
+            scale_by = crop_w / width
+        elif crop_w > crop_h:
+            scale_by = crop_w / width
+        elif crop_h > crop_w:
+            scale_by = crop_h / height
 
-    # take the focal point and turn it into crop coordinates that try to center over the focal
-    # point but then get adjusted back into the frame
-    y_half = int(settings.crop_height / 2)
-    x_half = int(settings.crop_width / 2)
+    # Only resize if scale_by != 1, avoids unnecessary copying
+    if scale_by != 1.0:
+        new_size = (int(width * scale_by), int(height * scale_by))
+        im = im.resize(new_size)
+    else:
+        # Avoid a superfluous .copy() for im_debug if not necessary
+        new_size = (width, height)
 
-    x1 = focus.x - x_half
-    if x1 < 0:
-        x1 = 0
-    elif x1 + settings.crop_width > im.width:
-        x1 = im.width - settings.crop_width
+    # The debug image is only required if annotate_image is enabled, delay its creation until/if needed
+    annotate = getattr(settings, "annotate_image", False)
+    desktop_view = getattr(settings, "desktop_view_image", False)
+    im_debug = im.copy() if annotate else None
 
-    y1 = focus.y - y_half
-    if y1 < 0:
-        y1 = 0
-    elif y1 + settings.crop_height > im.height:
-        y1 = im.height - settings.crop_height
+    focus = focal_point(im_debug if annotate else im, settings)
 
-    x2 = x1 + settings.crop_width
-    y2 = y1 + settings.crop_height
+    y_half = crop_height // 2
+    x_half = crop_width // 2
+
+    # Clamp coordinates using min/max, more performant and idiomatic
+    x1 = max(0, min(focus.x - x_half, im.width - crop_width))
+    y1 = max(0, min(focus.y - y_half, im.height - crop_height))
+    x2 = x1 + crop_width
+    y2 = y1 + crop_height
 
     crop = [x1, y1, x2, y2]
 
-    results = []
+    results = [im.crop(tuple(crop))]
 
-    results.append(im.crop(tuple(crop)))
-
-    if settings.annotate_image:
+    if annotate:
         d = ImageDraw.Draw(im_debug)
         rect = list(crop)
         rect[2] -= 1
         rect[3] -= 1
         d.rectangle(rect, outline=GREEN)
         results.append(im_debug)
-        if settings.desktop_view_image:
+        if desktop_view:
             im_debug.show()
 
     return results
 
 
 def focal_point(im, settings):
-    corner_points = image_corner_points(im, settings) if settings.corner_points_weight > 0 else []
-    entropy_points = image_entropy_points(im, settings) if settings.entropy_points_weight > 0 else []
-    face_points = image_face_points(im, settings) if settings.face_points_weight > 0 else []
+    # Short-circuit weights for efficiency and keep results in locals
+    cpw = getattr(settings, "corner_points_weight", 0)
+    epw = getattr(settings, "entropy_points_weight", 0)
+    fpw = getattr(settings, "face_points_weight", 0)
+
+    corner_points = image_corner_points(im, settings) if cpw > 0 else []
+    entropy_points = image_entropy_points(im, settings) if epw > 0 else []
+    face_points = image_face_points(im, settings) if fpw > 0 else []
 
     pois = []
 
+    # Compute total only once, and only for non-empty lists
     weight_pref_total = 0
     if corner_points:
-        weight_pref_total += settings.corner_points_weight
+        weight_pref_total += cpw
     if entropy_points:
-        weight_pref_total += settings.entropy_points_weight
+        weight_pref_total += epw
     if face_points:
-        weight_pref_total += settings.face_points_weight
+        weight_pref_total += fpw
 
     corner_centroid = None
     if corner_points:
         corner_centroid = centroid(corner_points)
-        corner_centroid.weight = settings.corner_points_weight / weight_pref_total
+        corner_centroid.weight = cpw / weight_pref_total
         pois.append(corner_centroid)
 
     entropy_centroid = None
     if entropy_points:
         entropy_centroid = centroid(entropy_points)
-        entropy_centroid.weight = settings.entropy_points_weight / weight_pref_total
+        entropy_centroid.weight = epw / weight_pref_total
         pois.append(entropy_centroid)
 
     face_centroid = None
     if face_points:
         face_centroid = centroid(face_points)
-        face_centroid.weight = settings.face_points_weight / weight_pref_total
+        face_centroid.weight = fpw / weight_pref_total
         pois.append(face_centroid)
 
     average_point = poi_average(pois, settings)
 
-    if settings.annotate_image:
+    if getattr(settings, "annotate_image", False):
         d = ImageDraw.Draw(im)
         max_size = min(im.width, im.height) * 0.07
         if corner_centroid is not None:
