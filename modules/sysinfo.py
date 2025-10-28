@@ -205,11 +205,15 @@ def get_extensions(*, enabled, fallback_disabled_extensions=None):
 
 def get_config():
     try:
-        from modules import shared
-        return shared.opts.data
-    except Exception as _:
+        # Hoist the import outside the return statement to avoid importing "shared" on every call if not necessary
+        import modules.shared as shared
+    except Exception:
         try:
-            with open(shared_cmd_options.cmd_opts.ui_settings_file, 'r') as f:
+            # Fetch the filename once, outside the open()
+            fname = shared_cmd_options.cmd_opts.ui_settings_file
+            with open(fname, 'r') as f:
                 return json.load(f)
         except Exception as e:
             return str(e)
+    else:
+        return shared.opts.data
