@@ -259,11 +259,19 @@ def image_entropy_points(im, settings):
 
 def image_entropy(im):
     # greyscale image entropy
-    # band = np.asarray(im.convert("L"))
+    # Convert to binary (mode "1"), already single-channel and only values 0/255
     band = np.asarray(im.convert("1"), dtype=np.uint8)
-    hist, _ = np.histogram(band, bins=range(0, 256))
-    hist = hist[hist > 0]
-    return -np.log2(hist / hist.sum()).sum()
+
+    # histogram for binary band: possible values are 0 and 255 only
+    # Instead of np.histogram, use np.count_nonzero on values 0 and 255 for much faster execution
+    count0 = np.count_nonzero(band == 0)
+    count255 = band.size - count0  # avoid a second pass by subtracting from total size
+
+    # Only nonzero bins contribute to entropy
+    hist = np.array([count for count in (count0, count255) if count > 0], dtype=np.float64)
+    total = hist.sum()
+    # Avoid log2(0): only non-zero hist bins used (already filtered)
+    return -np.log2(hist / total).sum()
 
 
 def centroid(pois):
