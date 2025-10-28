@@ -6,6 +6,17 @@ from PIL import ImageDraw
 from modules import paths_internal
 from pkg_resources import parse_version
 
+_preloaded_classifiers = [
+    (cv2.CascadeClassifier(f'{cv2.data.haarcascades}haarcascade_eye.xml'), 0.01),
+    (cv2.CascadeClassifier(f'{cv2.data.haarcascades}haarcascade_frontalface_default.xml'), 0.05),
+    (cv2.CascadeClassifier(f'{cv2.data.haarcascades}haarcascade_profileface.xml'), 0.05),
+    (cv2.CascadeClassifier(f'{cv2.data.haarcascades}haarcascade_frontalface_alt.xml'), 0.05),
+    (cv2.CascadeClassifier(f'{cv2.data.haarcascades}haarcascade_frontalface_alt2.xml'), 0.05),
+    (cv2.CascadeClassifier(f'{cv2.data.haarcascades}haarcascade_frontalface_alt_tree.xml'), 0.05),
+    (cv2.CascadeClassifier(f'{cv2.data.haarcascades}haarcascade_eye_tree_eyeglasses.xml'), 0.05),
+    (cv2.CascadeClassifier(f'{cv2.data.haarcascades}haarcascade_upperbody.xml'), 0.05)
+]
+
 GREEN = "#0F0"
 BLUE = "#00F"
 RED = "#F00"
@@ -169,31 +180,43 @@ def image_face_points(im, settings):
     else:
         np_im = np.array(im)
         gray = cv2.cvtColor(np_im, cv2.COLOR_BGR2GRAY)
-
-        tries = [
-            [f'{cv2.data.haarcascades}haarcascade_eye.xml', 0.01],
-            [f'{cv2.data.haarcascades}haarcascade_frontalface_default.xml', 0.05],
-            [f'{cv2.data.haarcascades}haarcascade_profileface.xml', 0.05],
-            [f'{cv2.data.haarcascades}haarcascade_frontalface_alt.xml', 0.05],
-            [f'{cv2.data.haarcascades}haarcascade_frontalface_alt2.xml', 0.05],
-            [f'{cv2.data.haarcascades}haarcascade_frontalface_alt_tree.xml', 0.05],
-            [f'{cv2.data.haarcascades}haarcascade_eye_tree_eyeglasses.xml', 0.05],
-            [f'{cv2.data.haarcascades}haarcascade_upperbody.xml', 0.05]
-        ]
-        for t in tries:
-            classifier = cv2.CascadeClassifier(t[0])
-            minsize = int(min(im.width, im.height) * t[1])  # at least N percent of the smallest side
+        im_width, im_height = im.width, im.height
+        # Optimization: loop over preloaded classifiers, only compute minsize per image/type.
+        for classifier, scale in _preloaded_classifiers:
+            minsize = int(min(im_width, im_height) * scale)  # at least N percent of the smallest side
             try:
-                faces = classifier.detectMultiScale(gray, scaleFactor=1.1,
-                                                    minNeighbors=7, minSize=(minsize, minsize),
-                                                    flags=cv2.CASCADE_SCALE_IMAGE)
+                faces = classifier.detectMultiScale(
+                    gray,
+                    scaleFactor=1.1,
+                    minNeighbors=7,
+                    minSize=(minsize, minsize),
+                    flags=cv2.CASCADE_SCALE_IMAGE
+                )
             except Exception:
                 continue
-
-            if faces:
-                rects = [[f[0], f[1], f[0] + f[2], f[1] + f[3]] for f in faces]
-                return [PointOfInterest((r[0] + r[2]) // 2, (r[1] + r[3]) // 2, size=abs(r[0] - r[2]),
-                                        weight=1 / len(rects)) for r in rects]
+            if faces is not None and len(faces) > 0:
+                n_rects = len(faces)
+                # Optimization: Precompute reciprocal for division in loop.
+                inv_len = 1 / n_rects
+                # Optimization: Vectorized calculation of rects and POIs with numpy for faster batch ops.
+                arr_faces = np.array(faces)
+                # arr_faces columns: x, y, w, h
+                x0 = arr_faces[:, 0]
+                y0 = arr_faces[:, 1]
+                x1 = x0 + arr_faces[:, 2]
+                y1 = y0 + arr_faces[:, 3]
+                centers_x = (x0 + x1) // 2
+                centers_y = (y0 + y1) // 2
+                sizes = abs(x1 - x0)
+                return [
+                    PointOfInterest(
+                        int(cx),
+                        int(cy),
+                        size=int(sz),
+                        weight=inv_len
+                    )
+                    for cx, cy, sz in zip(centers_x, centers_y, sizes)
+                ]
     return []
 
 
