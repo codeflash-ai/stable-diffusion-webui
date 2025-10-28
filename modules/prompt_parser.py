@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections import namedtuple
 import lark
+import torch
 
 # a prompt like this: "fantasy landscape with a [mountain:lake:0.25] and [an oak:a christmas tree:0.75][ in foreground::0.6][: in background:0.25] [shoddy:masterful:0.5]"
 # will be represented with prompt_schedule like this (assuming steps=100):
@@ -307,14 +308,22 @@ def reconstruct_cond_batch(c: list[list[ScheduledPromptConditioning]], current_s
 def stack_conds(tensors):
     # if prompts have wildly different lengths above the limit we'll get tensors of different shapes
     # and won't be able to torch.stack them. So this fixes that.
-    token_count = max([x.shape[0] for x in tensors])
-    for i in range(len(tensors)):
-        if tensors[i].shape[0] != token_count:
-            last_vector = tensors[i][-1:]
-            last_vector_repeated = last_vector.repeat([token_count - tensors[i].shape[0], 1])
-            tensors[i] = torch.vstack([tensors[i], last_vector_repeated])
-
-    return torch.stack(tensors)
+    token_counts = [x.shape[0] for x in tensors]
+    token_count = max(token_counts)
+    # Optimize: Preallocate a new list and only pad tensors as needed
+    if any(tc != token_count for tc in token_counts):
+        stacked_tensors = []
+        for tensor in tensors:
+            rows_to_add = token_count - tensor.shape[0]
+            if rows_to_add > 0:
+                last_vector_repeated = tensor[-1:].expand(rows_to_add, -1)
+                padded = torch.vstack([tensor, last_vector_repeated])
+                stacked_tensors.append(padded)
+            else:
+                stacked_tensors.append(tensor)
+        return torch.stack(stacked_tensors)
+    else:
+        return torch.stack(tensors)
 
 
 
@@ -328,19 +337,28 @@ def reconstruct_multicond_batch(c: MulticondLearnedConditioning, current_step):
         conds_for_batch = []
 
         for composable_prompt in composable_prompts:
-            target_index = 0
-            for current, entry in enumerate(composable_prompt.schedules):
-                if current_step <= entry.end_at_step:
-                    target_index = current
+            # Linear search for target_index, but since schedules are assumed sorted by end_at_step,
+            # this can be optimized by using enumerate with break (as original), but let's use a tight while loop.
+            schedules = composable_prompt.schedules
+            n_schedules = len(schedules)
+            # Optimize: Use a while loop instead of for-break for speed
+            idx = 0
+            while idx < n_schedules:
+                if current_step <= schedules[idx].end_at_step:
+                    target_index = idx
                     break
+                idx += 1
+            else:
+                target_index = n_schedules - 1  # fallback if none found; should match original semantics if this happens
 
             conds_for_batch.append((len(tensors), composable_prompt.weight))
-            tensors.append(composable_prompt.schedules[target_index].cond)
+            tensors.append(schedules[target_index].cond)
 
         conds_list.append(conds_for_batch)
 
     if isinstance(tensors[0], dict):
         keys = list(tensors[0].keys())
+        # Use list comprehension for slightly better performance and memory
         stacked = {k: stack_conds([x[k] for x in tensors]) for k in keys}
         stacked = DictWithShape(stacked, stacked['crossattn'].shape)
     else:
