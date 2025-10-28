@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections import namedtuple
 import lark
+import torch
 
 # a prompt like this: "fantasy landscape with a [mountain:lake:0.25] and [an oak:a christmas tree:0.75][ in foreground::0.6][: in background:0.25] [shoddy:masterful:0.5]"
 # will be represented with prompt_schedule like this (assuming steps=100):
@@ -307,12 +308,12 @@ def reconstruct_cond_batch(c: list[list[ScheduledPromptConditioning]], current_s
 def stack_conds(tensors):
     # if prompts have wildly different lengths above the limit we'll get tensors of different shapes
     # and won't be able to torch.stack them. So this fixes that.
-    token_count = max([x.shape[0] for x in tensors])
+    token_count = max(x.shape[0] for x in tensors)
     for i in range(len(tensors)):
         if tensors[i].shape[0] != token_count:
             last_vector = tensors[i][-1:]
-            last_vector_repeated = last_vector.repeat([token_count - tensors[i].shape[0], 1])
-            tensors[i] = torch.vstack([tensors[i], last_vector_repeated])
+            pad_size = token_count - tensors[i].shape[0]
+            tensors[i] = torch.cat([tensors[i], last_vector.expand(pad_size, -1)])
 
     return torch.stack(tensors)
 
