@@ -46,8 +46,21 @@ def lcg(m=2**32, a=1664525, c=1013904223, seed=0):
 
 
 def xor_block(block):
-    g = lcg()
-    randblock = np.array([next(g) for _ in range(np.prod(block.shape))]).astype(np.uint8).reshape(block.shape)
+    # Calculate the total number of elements to generate
+    total_elems = block.size
+    # Initialize the generator state
+    m, a, c, seed = 2**32, 1664525, 1013904223, 0
+    # Preallocate an empty output array
+    rand_vals = np.empty(total_elems, dtype=np.uint8)
+
+    # Compute LCG sequence in vectorized fashion where possible
+    # For CPU efficiency, avoid using the generator and instead manual iteration:
+    for i in range(total_elems):
+        seed = (a * seed + c) % m
+        rand_vals[i] = seed % 255
+
+    randblock = rand_vals.reshape(block.shape)
+    # The rest stays the same: xor with block, masking randblock as before
     return np.bitwise_xor(block.astype(np.uint8), randblock & 0x0F)
 
 
