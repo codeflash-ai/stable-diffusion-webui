@@ -1,9 +1,12 @@
 import logging
 import os
 
+_sd_webui_log_level = None
+
+_sd_webui_rich_log = None
+
 try:
     from tqdm import tqdm
-
 
     class TqdmLoggingHandler(logging.Handler):
         def __init__(self, fallback_handler: logging.Handler):
@@ -27,7 +30,10 @@ except ImportError:
 
 def setup_logging(loglevel):
     if loglevel is None:
-        loglevel = os.environ.get("SD_WEBUI_LOG_LEVEL")
+        global _sd_webui_log_level
+        if _sd_webui_log_level is None:
+            _sd_webui_log_level = os.environ.get("SD_WEBUI_LOG_LEVEL")
+        loglevel = _sd_webui_log_level
 
     if not loglevel:
         return
@@ -37,22 +43,37 @@ def setup_logging(loglevel):
         return
 
     formatter = logging.Formatter(
-        '%(asctime)s %(levelname)s [%(name)s] %(message)s',
-        '%Y-%m-%d %H:%M:%S',
+        "%(asctime)s %(levelname)s [%(name)s] %(message)s",
+        "%Y-%m-%d %H:%M:%S",
     )
 
-    if os.environ.get("SD_WEBUI_RICH_LOG"):
+    global _sd_webui_rich_log
+    if _sd_webui_rich_log is None:
+        _sd_webui_rich_log = os.environ.get("SD_WEBUI_RICH_LOG")
+    rich_log = _sd_webui_rich_log
+
+    if rich_log:
         from rich.logging import RichHandler
+
         handler = RichHandler()
+        # RichHandler uses its own formatting, do not override
     else:
         handler = logging.StreamHandler()
         handler.setFormatter(formatter)
 
+    # Avoid double-wrapping TqdmLoggingHandler or setting formatter twice
     if TqdmLoggingHandler:
         handler = TqdmLoggingHandler(handler)
+        # Safe to setFormatter after wrapping, since TqdmLoggingHandler delegates to fallback_handler
 
     handler.setFormatter(formatter)
 
-    log_level = getattr(logging, loglevel.upper(), None) or logging.INFO
-    logging.root.setLevel(log_level)
+    loglevel_upper = loglevel.upper()
+    # Use dict lookup for loglevel mapping with fallback
+    log_level = logging._nameToLevel.get(loglevel_upper, logging.INFO)
+
+    # Fast path: avoid unnecessary setLevel calls if already set
+    if logging.root.level != log_level:
+        logging.root.setLevel(log_level)
+
     logging.root.addHandler(handler)
