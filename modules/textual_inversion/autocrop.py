@@ -325,12 +325,11 @@ class PointOfInterest:
         self.size = size
 
     def bounding(self, size):
-        return [
-            self.x - size // 2,
-            self.y - size // 2,
-            self.x + size // 2,
-            self.y + size // 2
-        ]
+        # Compute half_size once to avoid repeated integer division
+        half_size = size // 2
+        x = self.x
+        y = self.y
+        return [x - half_size, y - half_size, x + half_size, y + half_size]
 
 
 class Settings:
